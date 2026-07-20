@@ -1,0 +1,24 @@
+cd ~/projects/long-sleep
+
+REF_DIR=~/projects/long-sleep/ncbi_dataset/data/GCF_052094955.1
+GTF="$REF_DIR/genomic.chr.gtf"
+FA="$REF_DIR/GCF_052094955.1_mIctTri1.hap1_genomic.chr.fa"
+DT="$RESULTS/enrsa_hap1/design.tsv"
+
+# Step 1 — pausing / gene body analysis
+apptainer exec tools/enrsa_latest.sif pause_PROseq.py \
+  -pwout "$RESULTS/enrsa_hap1" \
+  -organism ictTri \
+  -gtf "$GTF" \
+  -fa "$FA" \
+  -design_table "$DT" \
+  -verbose
+
+# Step 2 — enhancer / eRNA analysis
+apptainer exec tools/enrsa_latest.sif eRNA.py \
+  -pwout "$RESULTS/enrsa_hap1" \
+  -organism ictTri \
+  -gtf "$GTF" \
+  -fa "$FA" \
+  -design_table "$DT" \
+  -verbose

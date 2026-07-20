@@ -1,0 +1,58 @@
+library(universalmotif); 
+library(GenomicRanges)
+library(Rsamtools)
+library(Biostrings)
+
+root   <- "~/projects/long-sleep"
+outdir <- file.path(root, "results/enrsa_hap1/union")
+dir.create(outdir, showWarnings = FALSE)
+PAD_BP <- 25
+
+motifs <- read_jaspar(file.path(root, "ref",
+  "JASPAR2026_CORE_vertebrates_redundant_pfms_jaspar.txt"))
+
+de <- do.call(c, lapply(c("IBA_vs_SA","Ent_vs_SA","ET_vs_SA","LT_vs_SA"), function(cc) {
+  d <- read.delim(file.path(root, "results/enrsa_hap1", cc, "eRNA/Enhancer_change.txt"))
+  d <- subset(d, !is.na(padj) & padj < 0.05 & abs(log2FoldChange) > 1)
+  GRanges(d$chr, IRanges(d$start + 1L, d$end), contrast = cc, l2fc = d$log2FoldChange)
+}))
+
+enhancers_gr <- reduce(de)
+names(enhancers_gr) <- paste0("enh_", seq_along(enhancers_gr))
+
+ov <- findOverlaps(de, enhancers_gr)
+write.csv(data.frame(enh = names(enhancers_gr)[subjectHits(ov)],
+                     contrast = de$contrast[queryHits(ov)],
+                     l2fc = de$l2fc[queryHits(ov)]),
+          file.path(outdir, "provenance.csv"), row.names = FALSE)
+
+fa_file <- FaFile(file.path(root, "ncbi_dataset/data/GCF_052094955.1",
+                            "GCF_052094955.1_mIctTri1.hap1_genomic.chr.fna"))
+seqlengths(enhancers_gr) <- seqlengths(fa_file)[seqlevels(enhancers_gr)]
+gr_pad <- trim(resize(enhancers_gr, width(enhancers_gr) + 2L*PAD_BP, fix = "center"))
+
+enhancer_seqs <- getSeq(fa_file, gr_pad)
+names(enhancer_seqs) <- names(gr_pad)
+enhancer_seqs <- enhancer_seqs[!grepl("^N+$", as.character(enhancer_seqs))]
+
+chunks <- split(seq_along(enhancer_seqs), ceiling(seq_along(enhancer_seqs)/100))
+counts <- lapply(seq_along(chunks), function(i) {
+  h <- as.data.frame(scan_sequences(motifs, enhancer_seqs[chunks[[i]]],
+        threshold = 1e-4, threshold.type = "pvalue", RC = TRUE, nthreads = 2))
+  tab <- as.data.frame(table(sequence = h$sequence, motif = h$motif),
+                       stringsAsFactors = FALSE)
+  message("chunk ", i, "/", length(chunks))
+  tab[tab$Freq > 0, ]
+})
+
+hit_counts <- do.call(rbind, counts)
+saveRDS(hit_counts, file.path(outdir, "hit_counts_union.rds"))
+
+info <- data.frame(id = vapply(motifs, function(m) m@name, character(1)),
+                   tf = vapply(motifs, function(m) m@altname, character(1)),
+                   w  = vapply(motifs, function(m) ncol(m@motif), integer(1)))
+per_motif <- merge(aggregate(Freq ~ motif, hit_counts, sum), info,
+                   by.x = "motif", by.y = "id", all.x = TRUE)
+per_motif <- per_motif[order(-per_motif$Freq), ]
+write.csv(per_motif, file.path(outdir, "per_motif.csv"), row.names = FALSE)
+head(per_motif, 20)
